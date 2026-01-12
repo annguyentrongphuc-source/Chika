@@ -18,6 +18,17 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
+      },
+      // Explicitly set public directory for static assets
+      publicDir: 'public',
+      // Ensure static assets are properly handled
+      build: {
+        assetsDir: 'assets',
+        rollupOptions: {
+          output: {
+            assetFileNames: 'assets/[name].[ext]'
+          }
+        }
       }
     };
 });

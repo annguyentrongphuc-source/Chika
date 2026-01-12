@@ -114,6 +114,92 @@ export async function playAudioWithAdvancedPitchShift(
   }
 }
 
+// Play audio with real-time amplitude analysis for visualization
+export async function playAudioWithAmplitudeAnalysis(
+  base64Audio: string,
+  onAmplitudeUpdate: (amplitude: number) => void, // Callback with amplitude (0-1)
+  sampleRate: number = 24000,
+  pitchPercent: number = 30
+): Promise<void> {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx = new AudioContextClass({ sampleRate });
+    const uint8 = base64ToUint8Array(base64Audio);
+    const buffer = await decodeAudioData(uint8, ctx, sampleRate);
+    
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    
+    // Pitch shifting
+    const pitchRatio = 1 + (pitchPercent / 100);
+    const detuneCents = 1200 * Math.log2(pitchRatio);
+    source.detune.value = detuneCents;
+    source.playbackRate.value = 1.05;
+
+    // EQ filter
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'highshelf';
+    filter.frequency.value = 3000;
+    filter.gain.value = 2;
+    
+    // AnalyserNode for amplitude analysis
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256; // Smaller for faster updates
+    analyser.smoothingTimeConstant = 0.8; // Smooth transitions
+    
+    // Connect: source -> filter -> analyser -> destination
+    source.connect(filter);
+    filter.connect(analyser);
+    analyser.connect(ctx.destination);
+    
+    // Data array for frequency analysis
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    let animationFrameId: number;
+    let isPlaying = true;
+    
+    // Function to analyze amplitude
+    const analyze = () => {
+      if (!isPlaying) return;
+      
+      analyser.getByteFrequencyData(dataArray);
+      
+      // Calculate average amplitude
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i];
+      }
+      const average = sum / dataArray.length;
+      const amplitude = average / 255; // Normalize to 0-1
+      
+      // Update callback
+      onAmplitudeUpdate(amplitude);
+      
+      // Continue analyzing
+      animationFrameId = requestAnimationFrame(analyze);
+    };
+    
+    source.start(0);
+    analyze(); // Start analysis loop
+
+    return new Promise((resolve) => {
+      source.onended = () => {
+        isPlaying = false;
+        if (animationFrameId) {
+          cancelAnimationFrame(animationFrameId);
+        }
+        onAmplitudeUpdate(0); // Reset amplitude
+        ctx.close();
+        resolve();
+      };
+    });
+  } catch (e) {
+    console.error("Audio playback with amplitude analysis failed", e);
+    onAmplitudeUpdate(0);
+    // Fallback to simple playback
+    return playAudioWithAdvancedPitchShift(base64Audio, sampleRate, pitchPercent);
+  }
+}
+
 export function createBlob(data: Float32Array): Blob {
   const l = data.length;
   const int16 = new Int16Array(l);

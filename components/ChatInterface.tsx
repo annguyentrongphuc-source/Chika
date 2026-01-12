@@ -3,11 +3,23 @@ import { Send, Sparkles, Brain, Zap, Volume2, Mic } from 'lucide-react';
 import { Message, ModelType } from '../types';
 import { createChatSession, generateSpeech } from '../services/gemini';
 import { Chat } from '@google/genai';
-import { playAudio, playAudioWithAdvancedPitchShift } from '../utils/audioUtils';
+import { playAudio, playAudioWithAdvancedPitchShift, playAudioWithAmplitudeAnalysis } from '../utils/audioUtils';
+import { parseEmotionTags, removeEmotionTags, getFirstEmotion, getLastEmotion, ChikaExpression } from '../utils/emotionUtils';
 
-export const ChatInterface: React.FC = () => {
+interface ChatInterfaceProps {
+  onAudioStateChange?: (isPlaying: boolean) => void; // Callback to sync audio state with LiveVoiceInterface
+  onAmplitudeUpdate?: (amplitude: number) => void; // Callback to sync amplitude (0-1) with LiveVoiceInterface
+  onExpressionChange?: (expression: ChikaExpression) => void; // Callback to sync expression with LiveVoiceInterface
+}
+
+export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAudioStateChange, onAmplitudeUpdate, onExpressionChange }) => {
   const [messages, setMessages] = useState<Message[]>([
-    { id: 'init', role: 'model', text: 'Ne ne~ Let\'s chat! Don da yo!' }
+    { 
+        id: 'init', 
+        role: 'model', 
+        text: 'Ne ne~ Let\'s chat! Don da yo!',
+        translation: 'Hey hey~ Let\'s chat! Bam!'
+    }
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -20,8 +32,6 @@ export const ChatInterface: React.FC = () => {
   // Initialize or Update Session when model changes
   useEffect(() => {
     chatSessionRef.current = createChatSession(modelType, messages);
-    // Note: We pass 'messages' to restore history when switching, 
-    // but in a real app you might want to debounce this or only do it on toggle.
   }, [modelType]); 
 
   const scrollToBottom = () => {
@@ -62,26 +72,107 @@ export const ChatInterface: React.FC = () => {
       });
 
       const responseText = result.text;
-
       if (!responseText) throw new Error("No response text");
 
-      // Update UI with text response
+      let japaneseText = responseText;
+      let englishTranslation = "";
+
+      // Parse JSON response
+      try {
+        const jsonResponse = JSON.parse(responseText);
+        japaneseText = jsonResponse.japanese || responseText;
+        englishTranslation = jsonResponse.english || "";
+      } catch (e) {
+        console.warn("Could not parse JSON response, falling back to raw text", e);
+        // Fallback: assume raw text is Japanese
+        japaneseText = responseText;
+      }
+
+      // Parse emotion tags from text
+      const emotionTags = parseEmotionTags(japaneseText);
+      console.log('Emotion tags found:', emotionTags);
+
+      // Update expression based on emotion tags
+      if (emotionTags.length > 0) {
+        // Set first emotion immediately
+        const firstEmotion = emotionTags[0].emotion;
+        onExpressionChange?.(firstEmotion);
+        console.log('Setting first emotion:', firstEmotion);
+
+        // If there are multiple emotions, update them based on text position
+        // This simulates emotion changes during speech
+        if (emotionTags.length > 1) {
+          const cleanText = removeEmotionTags(japaneseText);
+          const totalChars = cleanText.length;
+          
+          // Update emotions based on their position in text
+          emotionTags.forEach((tag, index) => {
+            if (index > 0) { // Skip first (already set)
+              // Calculate timing based on character position
+              // Rough estimate: ~150ms per character for Japanese speech
+              const positionRatio = tag.position / (japaneseText.length || 1);
+              const estimatedDuration = cleanText.length * 150; // ms
+              const updateTime = estimatedDuration * positionRatio;
+              
+              console.log(`Scheduling emotion change to ${tag.emotion} at ${updateTime}ms (position: ${tag.position})`);
+              
+              setTimeout(() => {
+                onExpressionChange?.(tag.emotion);
+                console.log('Emotion changed to:', tag.emotion);
+              }, updateTime);
+            }
+          });
+          
+          // Ensure last emotion is set at the end
+          const lastEmotion = emotionTags[emotionTags.length - 1].emotion;
+          const estimatedDuration = cleanText.length * 150;
+          setTimeout(() => {
+            onExpressionChange?.(lastEmotion);
+            console.log('Final emotion set to:', lastEmotion);
+          }, estimatedDuration);
+        }
+      } else {
+        // Fallback: no tags found, use neutral
+        console.log('No emotion tags found, using neutral');
+        onExpressionChange?.('neutral');
+      }
+
+      // Remove emotion tags from display text
+      const cleanJapaneseText = removeEmotionTags(japaneseText);
+
+      // Update UI with cleaned text (no emotion tags visible)
       setMessages(prev => {
         const filtered = prev.filter(m => m.id !== 'thinking');
         return [...filtered, {
           id: Date.now().toString() + '_model',
           role: 'model',
-          text: responseText
+          text: cleanJapaneseText, // Clean text without tags
+          translation: englishTranslation
         }];
       });
 
-      // Generate and Play Audio (TTS) with higher pitch for genki girl voice
-      const audioData = await generateSpeech(responseText);
+      // Generate and Play Audio (TTS) using cleaned text (without emotion tags)
+      const audioData = await generateSpeech(cleanJapaneseText);
       if (audioData) {
         setIsPlayingAudio(true);
-        // Use advanced pitch shift: +30% pitch without changing speed
-        await playAudioWithAdvancedPitchShift(audioData, 24000, 30);
+        onAudioStateChange?.(true); // Sync with LiveVoiceInterface
+        
+        // Use amplitude analysis for real-time visualization
+        if (onAmplitudeUpdate) {
+          await playAudioWithAmplitudeAnalysis(
+            audioData,
+            (amplitude) => onAmplitudeUpdate(amplitude),
+            24000,
+            30
+          );
+        } else {
+          // Fallback to simple playback if no amplitude callback
+          await playAudioWithAdvancedPitchShift(audioData, 24000, 30);
+        }
+        
         setIsPlayingAudio(false);
+        onAudioStateChange?.(false); // Sync with LiveVoiceInterface
+        onAmplitudeUpdate?.(0); // Reset amplitude
       }
 
     } catch (error) {
@@ -91,7 +182,8 @@ export const ChatInterface: React.FC = () => {
         return [...filtered, {
             id: Date.now().toString() + '_error',
             role: 'model',
-            text: "Peshin! Something went wrong! (Error)"
+            text: "Peshin! Something went wrong! (Error)",
+            translation: "Whack! An error occurred!"
         }];
       });
     } finally {
@@ -217,8 +309,15 @@ export const ChatInterface: React.FC = () => {
                         </span>
                     </div>
                 ) : (
-                    <div className="text-sm md:text-base leading-relaxed whitespace-pre-wrap">
-                    {msg.text}
+                    <div className="flex flex-col gap-1">
+                        <div className="text-sm md:text-base leading-relaxed whitespace-pre-wrap font-medium">
+                            {msg.text}
+                        </div>
+                        {msg.translation && (
+                            <div className="text-xs text-black/50 font-normal border-t border-black/5 pt-1 mt-1">
+                                ({msg.translation})
+                            </div>
+                        )}
                     </div>
                 )}
                 </div>

@@ -1,5 +1,7 @@
 {
   "name": "Chika's Genki Chat",
   "description": "A high-energy chat with Chika Fujiwara using Gemini 3 Pro for thinking and Gemini 2.5 Flash for TTS.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "microphone"
+  ]
 }
