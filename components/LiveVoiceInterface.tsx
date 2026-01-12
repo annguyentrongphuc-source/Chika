@@ -143,27 +143,28 @@ export const LiveVoiceInterface: React.FC = () => {
                     const source = audioContextRef.current.createBufferSource();
                     source.buffer = audioBuffer;
                     
-                    // Apply pitch shifting for higher pitch genki girl voice
-                    // Create filters to boost high frequencies (makes voice brighter/higher)
-                    const filter1 = audioContextRef.current.createBiquadFilter();
-                    filter1.type = 'peaking';
-                    filter1.frequency.value = 2000;
-                    filter1.Q.value = 1;
-                    filter1.gain.value = 8; // Boost formant frequencies
+                    // Apply pitch shifting: +30% pitch without changing speed
+                    // Strategy: Slow down playback, then use detune to increase pitch
+                    // This compensates: slower speed + higher pitch = normal speed + higher pitch
+                    const pitchPercent = 30;
+                    const pitchRatio = 1 + (pitchPercent / 100); // 1.30
                     
-                    const filter2 = audioContextRef.current.createBiquadFilter();
-                    filter2.type = 'peaking';
-                    filter2.frequency.value = 3500;
-                    filter2.Q.value = 2;
-                    filter2.gain.value = 10; // Boost higher formants for brighter voice
+                    // Slow down to compensate for pitch increase
+                    source.playbackRate.value = 1.0 / pitchRatio; // ~0.77 to keep speed normal
                     
-                    // Slight playback rate increase for pitch (1.3 = +30% pitch)
-                    source.playbackRate.value = 1.3;
+                    // Use detune to bring pitch back up
+                    const detuneCents = 1200 * Math.log2(pitchRatio);
+                    source.detune.value = detuneCents;
                     
-                    // Connect: source -> filter1 -> filter2 -> outputNode
-                    source.connect(filter1);
-                    filter1.connect(filter2);
-                    filter2.connect(outputNode);
+                    // Light EQ to slightly brighten without distortion
+                    const filter = audioContextRef.current.createBiquadFilter();
+                    filter.type = 'highshelf'; // Better for overall brightness
+                    filter.frequency.value = 3000;
+                    filter.gain.value = 2; // Much lower gain (2dB) to preserve quality
+                    
+                    // Connect: source -> filter -> outputNode
+                    source.connect(filter);
+                    filter.connect(outputNode);
                     
                     source.addEventListener('ended', () => {
                         sourcesRef.current.delete(source);
@@ -173,9 +174,8 @@ export const LiveVoiceInterface: React.FC = () => {
                     });
 
                     source.start(nextStartTimeRef.current);
-                    // Adjust duration calculation for pitch shift (playbackRate 1.3 makes audio shorter)
-                    const pitchShiftRatio = 1.3;
-                    nextStartTimeRef.current += audioBuffer.duration / pitchShiftRatio;
+                    // No duration adjustment needed - detune doesn't change playback speed
+                    nextStartTimeRef.current += audioBuffer.duration;
                     sourcesRef.current.add(source);
                 }
 

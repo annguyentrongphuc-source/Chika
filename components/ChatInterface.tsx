@@ -79,9 +79,8 @@ export const ChatInterface: React.FC = () => {
       const audioData = await generateSpeech(responseText);
       if (audioData) {
         setIsPlayingAudio(true);
-        // Use advanced pitch shift for higher pitch without much speed change
-        // pitchShiftRatio: 1.3 = +30% pitch (higher than default 1.25)
-        await playAudioWithAdvancedPitchShift(audioData, 24000, 1.3);
+        // Use advanced pitch shift: +30% pitch without changing speed
+        await playAudioWithAdvancedPitchShift(audioData, 24000, 30);
         setIsPlayingAudio(false);
       }
 

@@ -66,7 +66,7 @@ export async function playAudio(base64Audio: string, sampleRate = 24000): Promis
 export async function playAudioWithAdvancedPitchShift(
   base64Audio: string, 
   sampleRate: number = 24000, 
-  pitchRatio: number = 1.0
+  pitchPercent: number = 5 // Pitch increase in percentage (default 5%)
 ): Promise<void> {
   try {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -77,27 +77,27 @@ export async function playAudioWithAdvancedPitchShift(
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     
-    // Pitch/Speed shift
-    source.playbackRate.value = pitchRatio;
-
-    // Formant shifting (EQ) to make it sound more feminine/anime-like
-    // Boost highs
-    const filter1 = ctx.createBiquadFilter();
-    filter1.type = 'peaking';
-    filter1.frequency.value = 2000;
-    filter1.Q.value = 1;
-    filter1.gain.value = 8;
-
-    const filter2 = ctx.createBiquadFilter();
-    filter2.type = 'peaking';
-    filter2.frequency.value = 3500;
-    filter2.Q.value = 2;
-    filter2.gain.value = 10;
+    // Strategy: Use detune for pitch, keep playbackRate close to 1.0 for normal speed
+    // Adjust playbackRate slightly to compensate if needed
+    const pitchRatio = 1 + (pitchPercent / 100); // e.g., 1.30 for +30%
     
-    // Connect graph: source -> filter1 -> filter2 -> destination
-    source.connect(filter1);
-    filter1.connect(filter2);
-    filter2.connect(ctx.destination);
+    // Use detune to increase pitch
+    const detuneCents = 1200 * Math.log2(pitchRatio);
+    source.detune.value = detuneCents;
+    
+    // Keep playbackRate close to 1.0 for normal speed (slight adjustment if needed)
+    // For +30% pitch, use playbackRate slightly above 1.0 to compensate for perceived slowness
+    source.playbackRate.value = 1.05; // Slightly faster to compensate
+
+    // Light EQ to preserve quality while slightly brightening voice
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'highshelf';
+    filter.frequency.value = 3000;
+    filter.gain.value = 2;
+    
+    // Connect graph: source -> filter -> destination
+    source.connect(filter);
+    filter.connect(ctx.destination);
     
     source.start(0);
 
@@ -109,6 +109,8 @@ export async function playAudioWithAdvancedPitchShift(
     });
   } catch (e) {
     console.error("Audio playback failed", e);
+    // Fallback to simple playback if filter fails
+    return playAudio(base64Audio, sampleRate);
   }
 }
 
