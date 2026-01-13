@@ -1,17 +1,32 @@
 import { GoogleGenAI, Chat, Modality } from "@google/genai";
 import { CHIKA_CHAT_INSTRUCTION, Message, ModelType } from "../types";
 
-let ai: GoogleGenAI | null = null;
+// Support multiple API keys
+let aiPrimary: GoogleGenAI | null = null;
+let aiSecondary: GoogleGenAI | null = null;
 
-const getAI = () => {
-  if (!ai) {
-    ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+export type ApiKeyType = 'primary' | 'secondary';
+
+const getAI = (apiKeyType: ApiKeyType = 'primary'): GoogleGenAI => {
+  if (apiKeyType === 'primary') {
+    if (!aiPrimary) {
+      aiPrimary = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    }
+    return aiPrimary;
+  } else {
+    if (!aiSecondary) {
+      aiSecondary = new GoogleGenAI({ apiKey: process.env.API_KEY_2 || process.env.API_KEY });
+    }
+    return aiSecondary;
   }
-  return ai;
 };
 
-export const createChatSession = (modelType: ModelType, previousMessages: Message[]): Chat => {
-  const client = getAI();
+export const createChatSession = (
+  modelType: ModelType, 
+  previousMessages: Message[],
+  apiKeyType: ApiKeyType = 'primary'
+): Chat => {
+  const client = getAI(apiKeyType);
   
   const modelName = modelType === 'thinking' 
     ? 'gemini-3-pro-preview' 
@@ -44,10 +59,13 @@ export const createChatSession = (modelType: ModelType, previousMessages: Messag
   });
 };
 
-export const generateSpeech = async (text: string): Promise<string | undefined> => {
+export const generateSpeech = async (
+  text: string,
+  apiKeyType: ApiKeyType = 'primary'
+): Promise<string | undefined> => {
   if (!text || !text.trim()) return undefined;
   
-  const client = getAI();
+  const client = getAI(apiKeyType);
   try {
     // The TTS model works best when explicitly told to "Say" the text, 
     // especially for non-English or expressive text, to avoid it interpreting the text as a prompt to answer.

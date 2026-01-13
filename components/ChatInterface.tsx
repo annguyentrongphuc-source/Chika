@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Sparkles, Brain, Zap, Volume2, Mic } from 'lucide-react';
 import { Message, ModelType } from '../types';
-import { createChatSession, generateSpeech } from '../services/gemini';
+import { createChatSession, generateSpeech, ApiKeyType } from '../services/gemini';
 import { Chat } from '@google/genai';
-import { playAudio, playAudioWithAdvancedPitchShift, playAudioWithAmplitudeAnalysis } from '../utils/audioUtils';
+import { playAudio, playAudioWithAdvancedPitchShift, playAudioWithAmplitudeAnalysis, base64ToUint8Array, decodeAudioData } from '../utils/audioUtils';
 import { parseEmotionTags, removeEmotionTags, getFirstEmotion, getLastEmotion, ChikaExpression } from '../utils/emotionUtils';
 
 interface ChatInterfaceProps {
@@ -25,14 +25,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAudioStateChange
   const [isLoading, setIsLoading] = useState(false);
   const [modelType, setModelType] = useState<ModelType>('fast');
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [apiKeyType, setApiKeyType] = useState<ApiKeyType>('primary');
   
   const chatSessionRef = useRef<Chat | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Initialize or Update Session when model changes
+  // Initialize or Update Session when model or API key changes
   useEffect(() => {
-    chatSessionRef.current = createChatSession(modelType, messages);
-  }, [modelType]); 
+    chatSessionRef.current = createChatSession(modelType, messages, apiKeyType);
+  }, [modelType, apiKeyType]); 
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -47,7 +48,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAudioStateChange
 
     // Ensure session exists (it should)
     if (!chatSessionRef.current) {
-        chatSessionRef.current = createChatSession(modelType, messages);
+        chatSessionRef.current = createChatSession(modelType, messages, apiKeyType);
     }
 
     const userText = inputValue;
@@ -88,59 +89,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAudioStateChange
         japaneseText = responseText;
       }
 
-      // Parse emotion tags from text
+      // Parse emotion tags from text (but don't schedule yet - wait for audio)
       const emotionTags = parseEmotionTags(japaneseText);
       console.log('Emotion tags found:', emotionTags);
-
-      // Update expression based on emotion tags
-      if (emotionTags.length > 0) {
-        // Set first emotion immediately
-        const firstEmotion = emotionTags[0].emotion;
-        onExpressionChange?.(firstEmotion);
-        console.log('Setting first emotion:', firstEmotion);
-
-        // If there are multiple emotions, update them based on text position
-        // This simulates emotion changes during speech
-        if (emotionTags.length > 1) {
-          const cleanText = removeEmotionTags(japaneseText);
-          const totalChars = cleanText.length;
-          
-          // Update emotions based on their position in text
-          emotionTags.forEach((tag, index) => {
-            if (index > 0) { // Skip first (already set)
-              // Calculate timing based on character position
-              // Rough estimate: ~150ms per character for Japanese speech
-              const positionRatio = tag.position / (japaneseText.length || 1);
-              const estimatedDuration = cleanText.length * 150; // ms
-              const updateTime = estimatedDuration * positionRatio;
-              
-              console.log(`Scheduling emotion change to ${tag.emotion} at ${updateTime}ms (position: ${tag.position})`);
-              
-              setTimeout(() => {
-                onExpressionChange?.(tag.emotion);
-                console.log('Emotion changed to:', tag.emotion);
-              }, updateTime);
-            }
-          });
-          
-          // Ensure last emotion is set at the end
-          const lastEmotion = emotionTags[emotionTags.length - 1].emotion;
-          const estimatedDuration = cleanText.length * 150;
-          setTimeout(() => {
-            onExpressionChange?.(lastEmotion);
-            console.log('Final emotion set to:', lastEmotion);
-          }, estimatedDuration);
-        }
-      } else {
-        // Fallback: no tags found, use neutral
-        console.log('No emotion tags found, using neutral');
-        onExpressionChange?.('neutral');
-      }
 
       // Remove emotion tags from display text
       const cleanJapaneseText = removeEmotionTags(japaneseText);
 
-      // Update UI with cleaned text (no emotion tags visible)
+      // Update UI with cleaned text (no emotion tags visible) - text appears first
       setMessages(prev => {
         const filtered = prev.filter(m => m.id !== 'thinking');
         return [...filtered, {
@@ -151,11 +107,63 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAudioStateChange
         }];
       });
 
-      // Generate and Play Audio (TTS) using cleaned text (without emotion tags)
-      const audioData = await generateSpeech(cleanJapaneseText);
+      // Generate Audio (TTS) using cleaned text (without emotion tags)
+      const audioData = await generateSpeech(cleanJapaneseText, apiKeyType);
       if (audioData) {
+        // Get actual audio duration BEFORE starting playback
+        // This ensures emotion changes are synced with actual audio playback
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const tempCtx = new AudioContextClass({ sampleRate: 24000 });
+        const uint8 = base64ToUint8Array(audioData);
+        const audioBuffer = await decodeAudioData(uint8, tempCtx, 24000);
+        // Account for playbackRate (0.95) used in playAudioWithAmplitudeAnalysis
+        const actualDurationMs = (audioBuffer.duration / 0.95) * 1000; // Convert to ms (playbackRate = 0.95, so divide to get actual duration)
+        tempCtx.close();
+        
+        console.log(`Audio duration: ${actualDurationMs}ms`);
+
+        // NOW schedule emotion changes based on ACTUAL audio duration
+        // This syncs emotions with voice playback, not text display
+        if (emotionTags.length > 0) {
+          // Schedule all emotion changes based on text position and actual audio duration
+          emotionTags.forEach((tag, index) => {
+            // Calculate timing based on character position in original text (with tags)
+            // Position ratio tells us where in the text the emotion tag appears
+            const positionRatio = tag.position / (japaneseText.length || 1);
+            // Map this ratio to actual audio duration
+            const updateTimeMs = actualDurationMs * positionRatio;
+            
+            console.log(`Scheduling emotion change to ${tag.emotion} at ${updateTimeMs}ms (position: ${tag.position}, ratio: ${positionRatio.toFixed(2)})`);
+            
+            setTimeout(() => {
+              onExpressionChange?.(tag.emotion);
+              console.log('Emotion changed to:', tag.emotion);
+            }, updateTimeMs);
+          });
+          
+          // Ensure last emotion is set at the end of audio
+          const lastEmotion = emotionTags[emotionTags.length - 1].emotion;
+          setTimeout(() => {
+            onExpressionChange?.(lastEmotion);
+            console.log('Final emotion set to:', lastEmotion);
+          }, actualDurationMs);
+        } else {
+          // Fallback: no tags found, use neutral when audio starts
+          console.log('No emotion tags found, using neutral');
+        }
+        
+        // NOW start audio playback (after scheduling emotions)
         setIsPlayingAudio(true);
         onAudioStateChange?.(true); // Sync with LiveVoiceInterface
+        
+        // Set first emotion (or neutral) when audio actually starts playing
+        if (emotionTags.length > 0) {
+          const firstEmotion = emotionTags[0].emotion;
+          onExpressionChange?.(firstEmotion);
+          console.log('Setting first emotion when audio starts:', firstEmotion);
+        } else {
+          onExpressionChange?.('neutral');
+        }
         
         // Use amplitude analysis for real-time visualization
         if (onAmplitudeUpdate) {
@@ -173,6 +181,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAudioStateChange
         setIsPlayingAudio(false);
         onAudioStateChange?.(false); // Sync with LiveVoiceInterface
         onAmplitudeUpdate?.(0); // Reset amplitude
+      } else {
+        // No audio data - fallback to neutral
+        onExpressionChange?.('neutral');
       }
 
     } catch (error) {
@@ -248,27 +259,43 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onAudioStateChange
             </div>
          </div>
 
-         {/* Model Toggle Switch */}
-         <button 
-            onClick={toggleModel}
-            disabled={isLoading}
-            className={`flex items-center gap-1 p-1 rounded-full border transition-all duration-300 ${
-                modelType === 'thinking' 
-                ? 'bg-purple-50 border-purple-200' 
-                : 'bg-yellow-50 border-yellow-200'
-            }`}
-         >
-            <div className={`px-2 py-1.5 rounded-full flex items-center gap-1 transition-all text-[10px] font-bold ${
-                modelType === 'fast' ? 'bg-yellow-400 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'
-            }`}>
-                <Zap className="w-3 h-3" /> <span className="hidden md:inline">Fast</span>
-            </div>
-            <div className={`px-2 py-1.5 rounded-full flex items-center gap-1 transition-all text-[10px] font-bold ${
-                modelType === 'thinking' ? 'bg-purple-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'
-            }`}>
-                <Brain className="w-3 h-3" /> <span className="hidden md:inline">Thinking</span>
-            </div>
-         </button>
+         <div className="flex items-center gap-2">
+            {/* API Key Toggle Switch */}
+            <button
+              onClick={() => setApiKeyType(prev => prev === 'primary' ? 'secondary' : 'primary')}
+              disabled={isLoading}
+              className={`px-2 py-1.5 rounded-full text-[10px] font-bold transition-all border ${
+                apiKeyType === 'primary'
+                  ? 'bg-pink-500 text-white border-pink-600 shadow-sm'
+                  : 'bg-blue-500 text-white border-blue-600 shadow-sm'
+              } ${isLoading ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}
+              title={`TTS API: ${apiKeyType === 'primary' ? 'API 1' : 'API 2'}`}
+            >
+              <span className="hidden md:inline">TTS: </span>{apiKeyType === 'primary' ? 'API 1' : 'API 2'}
+            </button>
+
+            {/* Model Toggle Switch */}
+            <button 
+               onClick={toggleModel}
+               disabled={isLoading}
+               className={`flex items-center gap-1 p-1 rounded-full border transition-all duration-300 ${
+                   modelType === 'thinking' 
+                   ? 'bg-purple-50 border-purple-200' 
+                   : 'bg-yellow-50 border-yellow-200'
+               }`}
+            >
+               <div className={`px-2 py-1.5 rounded-full flex items-center gap-1 transition-all text-[10px] font-bold ${
+                   modelType === 'fast' ? 'bg-yellow-400 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'
+               }`}>
+                   <Zap className="w-3 h-3" /> <span className="hidden md:inline">Fast</span>
+               </div>
+               <div className={`px-2 py-1.5 rounded-full flex items-center gap-1 transition-all text-[10px] font-bold ${
+                   modelType === 'thinking' ? 'bg-purple-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'
+               }`}>
+                   <Brain className="w-3 h-3" /> <span className="hidden md:inline">Thinking</span>
+               </div>
+            </button>
+         </div>
       </div>
 
       {/* Messages Area */}

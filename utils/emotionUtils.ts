@@ -112,19 +112,15 @@ export function detectEmotionFromText(text: string): ChikaExpression {
 export const FALLBACK_AVATAR_URL = "https://pbs.twimg.com/media/E2WXLzOXoAE-ld5.png";
 
 export function getExpressionImagePath(expression: ChikaExpression): string {
-  // Use specific JPG images from public/face folder
-  // Try multiple path formats for compatibility with different hosting environments
-  // Vite serves static files from public folder at root path
-  // public/face/chika_neutral.jpg should be served at /face/chika_neutral.jpg
-  // For Google AI Studio, try without leading slash first (relative path)
-  const basePath = 'face'; // Try relative path first (no leading slash)
+  // Use GitHub raw CDN URLs for faster image loading
+  // raw.githubusercontent.com serves files directly from GitHub CDN (no blob redirect)
   const imageMap: Record<ChikaExpression, string> = {
-    neutral: `${basePath}/chika_neutral.jpg`,
-    angry: `${basePath}/chika_angry.jpg`,
-    shock: `${basePath}/chika_shock.jpg`,
-    panic: `${basePath}/chika_panic.jpg`,
-    thinking: `${basePath}/chika_thinking.jpg`,
-    clueless: `${basePath}/chika_clueless.jpg`,
+    neutral: 'https://raw.githubusercontent.com/annguyentrongphuc-source/Chika/main/public/face/chika_neutral.jpg',
+    angry: 'https://raw.githubusercontent.com/annguyentrongphuc-source/Chika/main/public/face/chika_angry.jpg',
+    shock: 'https://raw.githubusercontent.com/annguyentrongphuc-source/Chika/main/public/face/chika_shock.jpg',
+    panic: 'https://raw.githubusercontent.com/annguyentrongphuc-source/Chika/main/public/face/chika_panic.jpg',
+    thinking: 'https://raw.githubusercontent.com/annguyentrongphuc-source/Chika/main/public/face/chika_thinking.jpg',
+    clueless: 'https://raw.githubusercontent.com/annguyentrongphuc-source/Chika/main/public/face/chika_clueless.jpg',
   };
   
   return imageMap[expression] || imageMap['neutral'];

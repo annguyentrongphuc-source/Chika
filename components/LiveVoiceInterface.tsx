@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ChikaExpression, getExpressionImagePath } from '../utils/emotionUtils';
 
 interface LiveVoiceInterfaceProps {
@@ -22,6 +22,36 @@ export const LiveVoiceInterface: React.FC<LiveVoiceInterfaceProps> = ({
   const [nextImage, setNextImage] = useState<string>('');
   const [opacity, setOpacity] = useState(1);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const imagesPreloadedRef = useRef<Set<string>>(new Set());
+
+  // Preload all emotion images on mount to ensure smooth transitions
+  useEffect(() => {
+    const allExpressions: ChikaExpression[] = ['neutral', 'angry', 'shock', 'panic', 'thinking', 'clueless'];
+    console.log('Preloading all emotion images...');
+    
+    allExpressions.forEach(expr => {
+      const imagePath = getExpressionImagePath(expr);
+      if (!imagesPreloadedRef.current.has(imagePath)) {
+        const img = new Image();
+        img.onload = async () => {
+          try {
+            // Decode image to ensure it's ready for rendering (prevents decoding lag)
+            await img.decode();
+            imagesPreloadedRef.current.add(imagePath);
+            console.log(`Preloaded and decoded: ${expr} (${imagePath})`);
+          } catch (error) {
+            console.error(`Failed to decode preload: ${expr}`, error);
+            // Still mark as preloaded even if decode fails
+            imagesPreloadedRef.current.add(imagePath);
+          }
+        };
+        img.onerror = () => {
+          console.error(`Failed to preload: ${expr} (${imagePath})`);
+        };
+        img.src = imagePath;
+      }
+    });
+  }, []); // Only run once on mount
 
   // Initialize image on mount - ensure it's neutral.jpg
   useEffect(() => {
@@ -39,19 +69,74 @@ export const LiveVoiceInterface: React.FC<LiveVoiceInterfaceProps> = ({
     // Only transition if the image path actually changes
     if (newImagePath !== currentImage && !isTransitioning) {
       console.log('Expression changed to:', currentExpression, 'New path:', newImagePath);
-      setIsTransitioning(true);
-      setNextImage(newImagePath);
-      setOpacity(0); // Fade out current
       
-      // Sau khi fade out, switch image và fade in
-      setTimeout(() => {
-        console.log('Switching to new image:', newImagePath);
-        setCurrentImage(newImagePath);
-        setOpacity(1); // Fade in new
-        setIsTransitioning(false);
-      }, 300); // Transition duration
+      const startTransition = () => {
+        setIsTransitioning(true);
+        setNextImage(newImagePath); // Set next image first
+        
+        // Wait for next frame to ensure DOM is updated with new image
+        // Double requestAnimationFrame ensures image is rendered before fade starts
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            // Start crossfade - image is decoded and ready
+            setOpacity(0); // Current fades out, next fades in
+          });
+        });
+        
+        // After transition completes, switch images
+        setTimeout(() => {
+          console.log('Switching to new image:', newImagePath);
+          setCurrentImage(newImagePath);
+          setOpacity(1); // Reset opacity for current image
+          setIsTransitioning(false);
+          setNextImage(''); // Clear next image
+        }, 150);
+      };
+      
+      // Check if image was already preloaded and decoded
+      if (imagesPreloadedRef.current.has(newImagePath)) {
+        // Image is preloaded - decode it again to ensure it's ready for rendering
+        const img = new Image();
+        img.src = newImagePath;
+        
+        // Decode image before starting transition (prevents decoding lag)
+        img.decode()
+          .then(() => {
+            console.log('Image decoded, starting transition');
+            startTransition();
+          })
+          .catch((error) => {
+            console.error('Failed to decode image, starting anyway:', error);
+            // Still start transition even if decode fails
+            startTransition();
+          });
+      } else {
+        // Image not preloaded - load and decode it now
+        console.log('Image not preloaded, loading and decoding now...');
+        const img = new Image();
+        img.onload = async () => {
+          try {
+            // Decode image to ensure it's ready for rendering
+            await img.decode();
+            imagesPreloadedRef.current.add(newImagePath);
+            console.log('Image loaded and decoded, starting transition');
+            startTransition();
+          } catch (error) {
+            console.error('Failed to decode image:', error);
+            // Still mark as preloaded and start transition even if decode fails
+            imagesPreloadedRef.current.add(newImagePath);
+            startTransition();
+          }
+        };
+        img.onerror = () => {
+          console.error('Failed to preload image:', newImagePath);
+          // Still try to transition even if preload fails
+          startTransition();
+        };
+        img.src = newImagePath;
+      }
     }
-  }, [expression]); // Only depend on expression prop
+  }, [expression, currentImage, isTransitioning]); // Add dependencies for proper re-rendering
 
   return (
     <div className="flex flex-col items-center justify-center h-full p-6 space-y-6 bg-gradient-to-br from-pink-50 to-pink-100 rounded-3xl shadow-inner border-4 border-white">
@@ -73,7 +158,7 @@ export const LiveVoiceInterface: React.FC<LiveVoiceInterfaceProps> = ({
             className="w-full h-full object-cover object-center avatar-optimized absolute inset-0"
             style={{
               opacity: opacity,
-              transition: 'opacity 0.3s ease-in-out'
+              transition: 'opacity 0.15s ease-in-out'
             }}
             onError={(e) => {
               console.error('Failed to load image:', currentImage);
@@ -83,15 +168,17 @@ export const LiveVoiceInterface: React.FC<LiveVoiceInterfaceProps> = ({
             }}
           />
           
-          {/* Next image (during transition) */}
+          {/* Next image (during transition) - soft blend with mix-blend-mode */}
           {isTransitioning && nextImage && (
             <img 
               src={nextImage}
               alt="Chika"
               className="w-full h-full object-cover object-center avatar-optimized absolute inset-0"
               style={{
-                opacity: 1 - opacity,
-                transition: 'opacity 0.3s ease-in-out'
+                opacity: 1 - opacity, // Starts at 1 (when opacity=0), fades to 0 (when opacity=1)
+                transition: 'opacity 0.15s ease-in-out',
+                zIndex: 1, // Always on top during transition
+                mixBlendMode: opacity > 0.5 ? 'normal' : 'multiply' // Soft blend when fading in
               }}
               onError={(e) => {
                  // Handle error for the transitioning image too

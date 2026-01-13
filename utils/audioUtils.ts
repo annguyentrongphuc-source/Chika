@@ -77,7 +77,7 @@ export async function playAudioWithAdvancedPitchShift(
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     
-    // Strategy: Use detune for pitch, keep playbackRate close to 1.0 for normal speed
+    // Strategy: Use detune for pitch, keep playbackRate at 0.95 for 5% slower
     // Adjust playbackRate slightly to compensate if needed
     const pitchRatio = 1 + (pitchPercent / 100); // e.g., 1.30 for +30%
     
@@ -85,9 +85,8 @@ export async function playAudioWithAdvancedPitchShift(
     const detuneCents = 1200 * Math.log2(pitchRatio);
     source.detune.value = detuneCents;
     
-    // Keep playbackRate close to 1.0 for normal speed (slight adjustment if needed)
-    // For +30% pitch, use playbackRate slightly above 1.0 to compensate for perceived slowness
-    source.playbackRate.value = 1.05; // Slightly faster to compensate
+    // Keep playbackRate at 0.95 for 5% slower than normal (reduced from 1.0 - additional 5% slower)
+    source.playbackRate.value = 0.95; // 5% slower than normal (reduced from 1.0 - additional 5% slower)
 
     // Light EQ to preserve quality while slightly brightening voice
     const filter = ctx.createBiquadFilter();
@@ -134,7 +133,7 @@ export async function playAudioWithAmplitudeAnalysis(
     const pitchRatio = 1 + (pitchPercent / 100);
     const detuneCents = 1200 * Math.log2(pitchRatio);
     source.detune.value = detuneCents;
-    source.playbackRate.value = 1.05;
+    source.playbackRate.value = 0.95; // 5% slower than normal (reduced from 1.0 - additional 5% slower)
 
     // EQ filter
     const filter = ctx.createBiquadFilter();
